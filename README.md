@@ -5,10 +5,47 @@ B-route smart electricity meters through binary-UART J11 adapters. It is
 intended to provide reusable framing, command, ECHONET Lite, serial transport,
 and asynchronous session layers without depending on Home Assistant.
 
-> [!IMPORTANT]
-> Version 0.1.0 establishes the package and release infrastructure. The public
-> protocol API is not included yet. Do not install this release expecting
-> hardware communication.
+Version 0.1.0 provides the binary framing, command, ECHONET Lite, serial
+transport, and self-healing asynchronous session layers.
+
+## Quick start
+
+Load credentials from a secret store or the environment and pass them to a
+session. No I/O happens until the session is connected.
+
+```python
+import os
+
+from broute_j11 import J11Session, SerialTransport, SessionConfig
+
+transport = SerialTransport("/dev/ttyUSB0")
+config = SessionConfig(
+    auth_id=os.environ["BROUTE_AUTH_ID"],
+    password=os.environ["BROUTE_PASSWORD"],
+)
+
+async with J11Session(transport, config) as session:
+    reading = await session.async_read_meter()
+    print(reading.instantaneous_power)
+```
+
+The package-level API also exposes network-cache, link/profile, statistics,
+backoff, transport, and documented exception types. Lower-level framing,
+command, and ECHONET helpers remain available from their respective modules.
+
+The exception hierarchy is:
+
+```text
+Exception
+├── ProtocolError
+│   ├── FrameFormatError / ChecksumError
+│   ├── CredentialFormatError / CommandFailedError
+│   ├── EchonetFrameError
+│   └── SessionError
+│       ├── SessionClosedError / SessionTimeoutError
+│       └── AuthenticationError / MeterNotFoundError / TransmissionError
+└── TransportError
+```
 
 ## Supported hardware
 
