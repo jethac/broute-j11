@@ -10,4 +10,4 @@ All notable changes to this project are documented here.
   reconnect/backoff, authentication lockout protection, and live diagnostics.
 - Support RATOC RS-WSUHA-J11 and ROHM BP35C2-J11-T01 hardware.
 - Publish a typed public API for Home Assistant and other Python consumers.
-
+- Test and declare compatibility with Python 3.11 through 3.14.

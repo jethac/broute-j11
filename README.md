@@ -95,7 +95,7 @@ belong in those integration repositories rather than this package.
 
 ## Development
 
-Python 3.11, 3.12, and 3.13 are supported. Create and activate a virtual
+Python 3.11, 3.12, 3.13, and 3.14 are supported. Create and activate a virtual
 environment, then install the development dependencies:
 
 ```console
