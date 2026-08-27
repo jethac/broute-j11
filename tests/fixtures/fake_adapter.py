@@ -96,6 +96,7 @@ class AdapterBehaviour:
     pana_result: int = _SUCCESS
     credentials_result: int = _SUCCESS
     fail_open: bool = False
+    fail_write: bool = False
     fail_read_after: int | None = None
     silent_commands: set[int] = field(default_factory=set)
     #: Number of upcoming responses to suppress per command.
@@ -125,6 +126,9 @@ class FakeAdapter:
         self.active_reads = 0
         self.max_concurrent_reads = 0
         self._condition = threading.Condition()
+        self._block_next_read = False
+        self._blocked_read_started = threading.Event()
+        self._release_blocked_read = threading.Event()
         self._outbox = bytearray()
         self._reassembler = FrameReassembler()
         self._open = False
@@ -161,6 +165,10 @@ class FakeAdapter:
             self.max_concurrent_reads = max(self.max_concurrent_reads, self.active_reads)
             try:
                 self.reads += 1
+                if self._block_next_read:
+                    self._block_next_read = False
+                    self._blocked_read_started.set()
+                    self._condition.wait_for(self._release_blocked_read.is_set, timeout=2.0)
                 if self.behaviour.fail_read_after is not None and self.reads > self.behaviour.fail_read_after:
                     raise TransportError("device disconnected")
                 if not self._outbox:
@@ -177,6 +185,8 @@ class FakeAdapter:
         with self._condition:
             if not self._open:
                 raise TransportError("device is not open")
+            if self.behaviour.fail_write:
+                raise TransportError("device disconnected")
         for frame in self._reassembler.feed(data):
             self.requests.append(frame)
             self._handle(frame)
@@ -187,6 +197,24 @@ class FakeAdapter:
         """Push raw bytes towards the host."""
         with self._condition:
             self._outbox += raw
+            self._condition.notify_all()
+
+    def block_next_read(self) -> None:
+        """Hold the next transport read until :meth:`release_blocked_read`."""
+        with self._condition:
+            self._block_next_read = True
+            self._blocked_read_started.clear()
+            self._release_blocked_read.clear()
+            self._condition.notify_all()
+
+    def wait_for_blocked_read(self, timeout: float = 1.0) -> bool:
+        """Wait synchronously until the controlled read has started."""
+        return self._blocked_read_started.wait(timeout)
+
+    def release_blocked_read(self) -> None:
+        """Let a read held by :meth:`block_next_read` return."""
+        self._release_blocked_read.set()
+        with self._condition:
             self._condition.notify_all()
 
     def emit_connection_lost(self) -> None:

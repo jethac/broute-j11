@@ -577,6 +577,63 @@ async def test_a_write_to_a_lost_device_reports_a_closed_session() -> None:
     await session.async_close()
 
 
+async def test_write_loss_joins_blocked_read_before_reconnect() -> None:
+    adapter = make_adapter()
+    session = make_session(adapter)
+    await session.async_connect()
+    adapter.block_next_read()
+    assert await asyncio.to_thread(adapter.wait_for_blocked_read)
+    adapter.behaviour.fail_write = True
+
+    with pytest.raises(SessionClosedError):
+        await session.async_read_meter()
+
+    adapter.behaviour.fail_write = False
+    reconnect = asyncio.create_task(session.async_ensure_connected())
+    try:
+        await asyncio.sleep(0.05)
+        assert not reconnect.done()
+        assert adapter.active_reads == 1
+        assert adapter.max_concurrent_reads == 1
+        adapter.release_blocked_read()
+        async with asyncio.timeout(2):
+            await reconnect
+    finally:
+        adapter.release_blocked_read()
+        if not reconnect.done():
+            reconnect.cancel()
+        await session.async_close()
+
+    assert adapter.active_reads == 0
+
+
+async def test_close_after_write_loss_joins_blocked_read() -> None:
+    adapter = make_adapter()
+    session = make_session(adapter)
+    await session.async_connect()
+    adapter.block_next_read()
+    assert await asyncio.to_thread(adapter.wait_for_blocked_read)
+    adapter.behaviour.fail_write = True
+
+    with pytest.raises(SessionClosedError):
+        await session.async_read_meter()
+
+    close = asyncio.create_task(session.async_close())
+    try:
+        await asyncio.sleep(0.05)
+        assert not close.done()
+        assert adapter.active_reads == 1
+        adapter.release_blocked_read()
+        async with asyncio.timeout(2):
+            await close
+    finally:
+        adapter.release_blocked_read()
+        if not close.done():
+            close.cancel()
+
+    assert adapter.active_reads == 0
+
+
 async def test_a_radio_disconnection_marks_the_session_disconnected() -> None:
     adapter = make_adapter()
     lost = asyncio.Event()

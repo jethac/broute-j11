@@ -427,7 +427,8 @@ class J11Session:
         """Cancel and join the sole task allowed to read from the transport."""
         reader, self._reader = self._reader, None
         if reader is not None:
-            reader.cancel()
+            if not reader.cancelling():
+                reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reader
 
@@ -841,7 +842,16 @@ class J11Session:
         loop = asyncio.get_running_loop()
         try:
             while True:
-                chunk = await loop.run_in_executor(None, self._transport.read, READ_CHUNK)
+                read_call = loop.run_in_executor(None, self._transport.read, READ_CHUNK)
+                try:
+                    chunk = await asyncio.shield(read_call)
+                except asyncio.CancelledError:
+                    # Cancelling an asyncio Future does not stop a blocking
+                    # executor call. Join the bounded transport read so a
+                    # replacement reader cannot overlap it.
+                    with contextlib.suppress(TransportError):
+                        await read_call
+                    raise
                 if not chunk:
                     continue
                 for frame in self._reassembler.feed(chunk):
@@ -891,7 +901,7 @@ class J11Session:
         """Mark the session as disconnected and wake every waiter."""
         was_connected = self._link is not None
         self._link = None
-        if self._reader is not None:
+        if self._reader is not None and not self._reader.cancelling():
             self._reader.cancel()
         self._fail_waiters(error)
         if was_connected and self._on_disconnect is not None:
