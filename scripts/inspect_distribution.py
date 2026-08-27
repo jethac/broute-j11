@@ -50,6 +50,7 @@ def inspect_distributions(wheel: Path, sdist: Path, expected: ExpectedMetadata) 
     normalized_name = expected.name.replace("-", "_")
     dist_info = f"{normalized_name}-{expected.version}.dist-info"
     package_init = f"{normalized_name}/__init__.py"
+    type_marker = f"{normalized_name}/py.typed"
     metadata_path = f"{dist_info}/METADATA"
     wheel_license = f"{dist_info}/licenses/LICENSE"
 
@@ -58,7 +59,7 @@ def inspect_distributions(wheel: Path, sdist: Path, expected: ExpectedMetadata) 
         require_members(
             wheel.name,
             wheel_members,
-            {package_init, metadata_path, wheel_license},
+            {package_init, type_marker, metadata_path, wheel_license},
         )
         if not wheel_archive.read(package_init).strip():
             raise DistributionInspectionError(f"{package_init} is empty")
@@ -84,6 +85,7 @@ def inspect_distributions(wheel: Path, sdist: Path, expected: ExpectedMetadata) 
         f"{sdist_root}/README.md",
         f"{sdist_root}/pyproject.toml",
         f"{sdist_root}/src/{package_init}",
+        f"{sdist_root}/src/{type_marker}",
     }
     with tarfile.open(sdist, "r:gz") as sdist_archive:
         sdist_members = set(sdist_archive.getnames())

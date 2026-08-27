@@ -44,6 +44,9 @@ Issues = "https://github.com/jethac/broute-j11/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+broute_j11 = ["py.typed"]
+
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
 asyncio_mode = "auto"

@@ -30,6 +30,7 @@ def write_wheel(
 ) -> None:
     members = {
         "broute_j11/__init__.py": b'__version__ = "0.1.0"\n',
+        "broute_j11/py.typed": b"PEP 561\n",
         f"{DIST_INFO}/licenses/LICENSE": b"MIT License\n",
         f"{DIST_INFO}/METADATA": (
             "Metadata-Version: 2.4\n"
@@ -52,6 +53,7 @@ def write_sdist(path: Path, *, omit: Iterable[str] = ()) -> None:
         f"{SDIST_ROOT}/README.md": b"# broute-j11\n",
         f"{SDIST_ROOT}/pyproject.toml": b'[project]\nname = "broute-j11"\n',
         f"{SDIST_ROOT}/src/broute_j11/__init__.py": b'__version__ = "0.1.0"\n',
+        f"{SDIST_ROOT}/src/broute_j11/py.typed": b"PEP 561\n",
     }
     with tarfile.open(path, "w:gz") as archive:
         for name, contents in members.items():
@@ -75,6 +77,7 @@ def test_inspection_accepts_expected_artifacts(tmp_path: Path) -> None:
     "missing_member",
     [
         "broute_j11/__init__.py",
+        "broute_j11/py.typed",
         f"{DIST_INFO}/licenses/LICENSE",
     ],
 )
@@ -105,6 +108,7 @@ def test_inspection_rejects_incorrect_metadata(tmp_path: Path) -> None:
         f"{SDIST_ROOT}/README.md",
         f"{SDIST_ROOT}/pyproject.toml",
         f"{SDIST_ROOT}/src/broute_j11/__init__.py",
+        f"{SDIST_ROOT}/src/broute_j11/py.typed",
     ],
 )
 def test_inspection_rejects_missing_sdist_member(tmp_path: Path, missing_member: str) -> None:
