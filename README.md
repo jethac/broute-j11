@@ -64,10 +64,11 @@ Run the same checks used by CI:
 ```console
 ruff format --check .
 ruff check .
-mypy src tests
+mypy src scripts tests
 pytest -q --cov=broute_j11 --cov-branch --cov-report=term-missing
 python -m build
-python -m twine check dist/*
+python -m twine check --strict dist/*
+python scripts/inspect_distribution.py dist/*.whl dist/*.tar.gz
 ```
 
 Tests that need protocol traffic must use synthetic frames. Hardware checks are

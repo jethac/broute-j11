@@ -26,10 +26,12 @@ dependencies = []
 dev = [
     "build>=1.2.2",
     "mypy>=1.17",
+    "PyYAML>=6.0.2",
     "pytest>=8.4",
     "pytest-cov>=6.2",
     "ruff>=0.12",
     "twine>=6.1",
+    "types-PyYAML>=6.0.12",
 ]
 
 [project.urls]
@@ -42,7 +44,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 
 [tool.coverage.run]
