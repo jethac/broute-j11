@@ -107,6 +107,8 @@ class AdapterBehaviour:
     #: Properties the meter refuses, answering Get_SNA with an empty value.
     unsupported: set[int] = field(default_factory=set)
     drop_meter_responses: int = 0
+    #: Delays for upcoming meter datagrams, consumed in request order.
+    meter_response_delays: list[float] = field(default_factory=list)
     properties: dict[int, bytes] = field(default_factory=lambda: dict(DEFAULT_PROPERTIES))
 
 
@@ -120,6 +122,8 @@ class FakeAdapter:
         self.opens = 0
         self.closes = 0
         self.reads = 0
+        self.active_reads = 0
+        self.max_concurrent_reads = 0
         self._condition = threading.Condition()
         self._outbox = bytearray()
         self._reassembler = FrameReassembler()
@@ -153,14 +157,20 @@ class FakeAdapter:
     def read(self, size: int = 1024) -> bytes:
         """Return buffered bytes, blocking briefly when there are none."""
         with self._condition:
-            self.reads += 1
-            if self.behaviour.fail_read_after is not None and self.reads > self.behaviour.fail_read_after:
-                raise TransportError("device disconnected")
-            if not self._outbox:
-                self._condition.wait(0.02)
-            chunk = bytes(self._outbox[:size])
-            del self._outbox[:size]
-            return chunk
+            self.active_reads += 1
+            self.max_concurrent_reads = max(self.max_concurrent_reads, self.active_reads)
+            try:
+                self.reads += 1
+                if self.behaviour.fail_read_after is not None and self.reads > self.behaviour.fail_read_after:
+                    raise TransportError("device disconnected")
+                if not self._outbox:
+                    self._condition.wait(0.02)
+                chunk = bytes(self._outbox[:size])
+                del self._outbox[:size]
+                return chunk
+            finally:
+                self.active_reads -= 1
+                self._condition.notify_all()
 
     def write(self, data: bytes) -> None:
         """Consume host requests and queue whatever the adapter would answer."""
@@ -350,15 +360,27 @@ class FakeAdapter:
         requested = tuple(request.property_map())
         refused = {epc for epc in requested if self.behaviour.get_sna or epc in self.behaviour.unsupported}
         properties = tuple(Property(epc=epc, edt=b"" if epc in refused else self._value(epc)) for epc in requested)
-        self._notify_datagram(
-            EchonetLiteFrame(
-                transaction_id=request.transaction_id,
-                source_object=LOW_VOLTAGE_METER_OBJECT,
-                destination_object=CONTROLLER_OBJECT,
-                esv=Esv.GET_SNA if refused else Esv.GET_RES,
-                properties=properties,
-            ).encode()
-        )
+        response = EchonetLiteFrame(
+            transaction_id=request.transaction_id,
+            source_object=LOW_VOLTAGE_METER_OBJECT,
+            destination_object=CONTROLLER_OBJECT,
+            esv=Esv.GET_SNA if refused else Esv.GET_RES,
+            properties=properties,
+        ).encode()
+        delay = self.behaviour.meter_response_delays.pop(0) if self.behaviour.meter_response_delays else 0.0
+        if delay:
+            threading.Thread(
+                target=self._notify_datagram_after,
+                args=(response, delay),
+                daemon=True,
+            ).start()
+        else:
+            self._notify_datagram(response)
+
+    def _notify_datagram_after(self, payload: bytes, delay: float) -> None:
+        """Emit one meter response after a controlled test delay."""
+        time.sleep(delay)
+        self._notify_datagram(payload)
 
     def _value(self, epc: int) -> bytes:
         return self.behaviour.properties.get(epc, b"")

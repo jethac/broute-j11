@@ -49,7 +49,7 @@ from .fixtures import frames
 METER_MAC = bytes.fromhex("0050C2FFFEDC2822")
 METER_ADDRESS = IPv6Address("fe80::250:c2ff:fedc:2822")
 SYNTHETIC_AUTH_ID = "0000000000000000000000000000ABCD"
-SYNTHETIC_PASSWORD = "SYNTHETICPW1"
+SYNTHETIC_PASSWORD = "SYNTHETICPW1"  # pragma: allowlist secret
 
 
 def test_reset_request_matches_documented_frame() -> None:

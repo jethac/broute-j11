@@ -266,8 +266,9 @@ class J11Session:
         self._network_cache = network_cache
         self._cached_network = network_cache.load() if network_cache is not None else None
         self._reassembler = FrameReassembler()
-        self._stats = SessionStats()
+        self._stats = SessionStats(frames=self._reassembler.stats)
         self._transaction_lock = asyncio.Lock()
+        self._echonet_lock = asyncio.Lock()
         self._connect_lock = asyncio.Lock()
         self._pending: dict[int, asyncio.Future[Frame]] = {}
         self._notifications: dict[int, asyncio.Queue[Frame]] = {}
@@ -415,19 +416,24 @@ class J11Session:
                 return link
 
     async def _async_open_transport(self) -> None:
+        await self._async_stop_reader()
         loop = asyncio.get_running_loop()
         self._reassembler.reset()
         await loop.run_in_executor(None, self._transport.open)
         self._transport_open = True
         self._reader = loop.create_task(self._async_read_loop())
 
-    async def _async_teardown(self) -> None:
-        self._link = None
+    async def _async_stop_reader(self) -> None:
+        """Cancel and join the sole task allowed to read from the transport."""
         reader, self._reader = self._reader, None
         if reader is not None:
             reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reader
+
+    async def _async_teardown(self) -> None:
+        self._link = None
+        await self._async_stop_reader()
         if self._transport_open:
             self._transport_open = False
             loop = asyncio.get_running_loop()
@@ -695,24 +701,25 @@ class J11Session:
         raise SessionError(str(last_error)) from last_error
 
     async def _async_echonet_get(self, epcs: Sequence[Epc]) -> dict[int, bytes]:
-        link = self._link
-        if link is None:
-            raise SessionClosedError("no PANA session is established")
-        self._transaction_id = (self._transaction_id + 1) % (_MAX_TRANSACTION_ID + 1)
-        transaction_id = self._transaction_id
-        payload = encode_get(list(epcs), transaction_id=transaction_id)
-        result = commands.parse_transmit_data_response(
-            await self._async_request(
-                commands.transmit_data_request(link.address, payload),
-                commands.CommandCode.TRANSMIT_DATA,
+        async with self._echonet_lock:
+            link = self._link
+            if link is None:
+                raise SessionClosedError("no PANA session is established")
+            self._transaction_id = (self._transaction_id + 1) % (_MAX_TRANSACTION_ID + 1)
+            transaction_id = self._transaction_id
+            payload = encode_get(list(epcs), transaction_id=transaction_id)
+            result = commands.parse_transmit_data_response(
+                await self._async_request(
+                    commands.transmit_data_request(link.address, payload),
+                    commands.CommandCode.TRANSMIT_DATA,
+                )
             )
-        )
-        if not result.transmission_succeeded and not result.queued:
-            message = f"the adapter could not transmit the request (result 0x{result.transmission_result:X})"
-            if result.retryable:
-                raise TransmissionError(message)
-            raise SessionError(message)
-        return await self._async_await_get_response(transaction_id)
+            if not result.transmission_succeeded and not result.queued:
+                message = f"the adapter could not transmit the request (result 0x{result.transmission_result:X})"
+                if result.retryable:
+                    raise TransmissionError(message)
+                raise SessionError(message)
+            return await self._async_await_get_response(transaction_id)
 
     async def _async_await_get_response(self, transaction_id: int) -> dict[int, bytes]:
         """Wait for the response to ``transaction_id``, skipping other traffic."""
@@ -845,8 +852,6 @@ class J11Session:
             if not self._closing:
                 _LOGGER.warning("The adapter's serial link failed: %s", err)
             self._handle_link_loss(err)
-        finally:
-            self._stats.frames = self._reassembler.stats
 
     def _dispatch(self, frame: Frame) -> None:
         """Route one decoded frame to whoever is waiting for it."""
@@ -886,6 +891,8 @@ class J11Session:
         """Mark the session as disconnected and wake every waiter."""
         was_connected = self._link is not None
         self._link = None
+        if self._reader is not None:
+            self._reader.cancel()
         self._fail_waiters(error)
         if was_connected and self._on_disconnect is not None:
             self._on_disconnect()

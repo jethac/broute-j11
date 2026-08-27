@@ -37,7 +37,7 @@ from .fixtures import fake_adapter as fake
 from .fixtures.fake_adapter import AdapterBehaviour, FakeAdapter
 
 AUTH_ID = "0000000000000000000000000000ABCD"
-PASSWORD = "SyntheticPw1"
+PASSWORD = "SyntheticPw1"  # pragma: allowlist secret
 FAST = {
     "command_timeout": 0.5,
     # The scan deadline follows the dwell time, so the shortest dwell keeps a
@@ -160,6 +160,31 @@ async def test_read_meter_converts_every_measurement() -> None:
     assert reading.current_t_phase == fake.EXPECTED_CURRENT_T
     assert reading.cumulative_forward_energy == fake.EXPECTED_FORWARD_KWH
     assert reading.cumulative_reverse_energy == fake.EXPECTED_REVERSE_KWH
+
+
+async def test_concurrent_meter_reads_keep_each_echonet_response_with_its_request() -> None:
+    adapter = make_adapter()
+    session = make_session(adapter, make_config(echonet_timeout=0.15, echonet_attempts=1))
+    await session.async_connect()
+    try:
+        # If both requests are in flight, the second response arrives first and
+        # the shared queue lets each caller discard the other's transaction.
+        adapter.behaviour.meter_response_delays[:] = [0.05, 0.0]
+        async with asyncio.timeout(2):
+            readings = await asyncio.gather(
+                session.async_read_meter(),
+                session.async_read_meter(),
+            )
+
+        assert [reading.instantaneous_power for reading in readings] == [
+            fake.EXPECTED_POWER,
+            fake.EXPECTED_POWER,
+        ]
+        assert session.stats.timeouts == 0
+        assert session.stats.reconnects == 0
+        assert adapter.opens == 1
+    finally:
+        await session.async_close()
 
 
 async def test_read_meter_reports_a_single_phase_meter() -> None:
@@ -519,6 +544,17 @@ async def test_line_noise_before_the_first_frame_is_ignored() -> None:
     assert session.stats.frames.discarded_bytes >= 5
 
 
+async def test_frame_stats_are_live_while_the_reader_is_running() -> None:
+    adapter = make_adapter(line_noise=b"\x00\x01\x02\xff\xfe")
+    session = make_session(adapter)
+    await session.async_connect()
+    try:
+        assert session.stats.frames.frames > 0
+        assert session.stats.frames.discarded_bytes >= 5
+    finally:
+        await session.async_close()
+
+
 async def test_losing_the_usb_device_disconnects_the_session() -> None:
     adapter = make_adapter()
     lost = asyncio.Event()
@@ -569,6 +605,48 @@ async def test_ensure_connected_rebuilds_a_lost_link() -> None:
     assert reading.instantaneous_power == fake.EXPECTED_POWER
     assert session.stats.connects == 2
     await session.async_close()
+
+
+async def test_notification_reconnect_owns_one_reader_and_close_leaves_none() -> None:
+    adapter = make_adapter()
+    lost = asyncio.Event()
+    session = make_session(adapter, on_disconnect=lost.set)
+    await session.async_connect()
+    adapter.emit_connection_lost()
+    async with asyncio.timeout(2):
+        await lost.wait()
+        await session.async_read_meter()
+
+    assert adapter.max_concurrent_reads == 1
+    await session.async_close()
+    await asyncio.sleep(0.05)
+    reads_after_close = adapter.reads
+    assert adapter.active_reads == 0
+    await asyncio.sleep(0.05)
+    assert adapter.reads == reads_after_close
+
+
+async def test_failed_notification_reconnect_leaves_no_orphan_reader() -> None:
+    adapter = make_adapter()
+    lost = asyncio.Event()
+    session = make_session(
+        adapter,
+        backoff=BackoffPolicy(initial=0.01, maximum=0.01, jitter=0.0),
+        on_disconnect=lost.set,
+    )
+    await session.async_connect()
+    adapter.emit_connection_lost()
+    async with asyncio.timeout(2):
+        await lost.wait()
+    adapter.behaviour.route_b_failures = 100
+
+    with pytest.raises(SessionClosedError):
+        await session.async_ensure_connected()
+    await asyncio.sleep(0.05)
+    reads_after_failure = adapter.reads
+    assert adapter.active_reads == 0
+    await asyncio.sleep(0.05)
+    assert adapter.reads == reads_after_failure
 
 
 async def test_ensure_connected_stops_after_the_last_attempt() -> None:

@@ -14,19 +14,26 @@ Load credentials from a secret store or the environment and pass them to a
 session. No I/O happens until the session is connected.
 
 ```python
+import asyncio
 import os
 
 from broute_j11 import J11Session, SerialTransport, SessionConfig
 
-transport = SerialTransport("/dev/ttyUSB0")
-config = SessionConfig(
-    auth_id=os.environ["BROUTE_AUTH_ID"],
-    password=os.environ["BROUTE_PASSWORD"],
-)
 
-async with J11Session(transport, config) as session:
-    reading = await session.async_read_meter()
-    print(reading.instantaneous_power)
+async def main() -> None:
+    transport = SerialTransport("/dev/ttyUSB0")
+    config = SessionConfig(
+        auth_id=os.environ["BROUTE_AUTH_ID"],
+        password=os.environ["BROUTE_PASSWORD"],
+    )
+
+    async with J11Session(transport, config) as session:
+        reading = await session.async_read_meter()
+        print(reading.instantaneous_power)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 The package-level API also exposes network-cache, link/profile, statistics,
